@@ -103,22 +103,12 @@ class FingerPaintImageView @JvmOverloads constructor(context: Context,
         return super.getDrawable()?.let {
             if (!isModified()) return it
 
-            val inverse = Matrix().apply { imageMatrix.invert(this) }
-            val scale = FloatArray(9).apply { inverse.getValues(this) }[Matrix.MSCALE_X]
-
             // draw original bitmap
             val result = Bitmap.createBitmap(it.intrinsicWidth, it.intrinsicHeight, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(result)
             it.draw(canvas)
 
-            val transformedPath = Path()
-            val transformedPaint = Paint()
-            paths.forEach { (path, paint) ->
-                path.transform(inverse, transformedPath)
-                transformedPaint.set(paint)
-                transformedPaint.strokeWidth *= scale
-                canvas.drawPath(transformedPath, transformedPaint)
-            }
+            drawPathsOnCanvas(canvas, paths)
             BitmapDrawable(resources, result)
         }
     }
@@ -260,4 +250,75 @@ class FingerPaintImageView @JvmOverloads constructor(context: Context,
         countDrawn = 0
         invalidate()
     }
+
+    /**
+     * draw the path on the given (mutable) bitmap.
+     * the path is scaled relatively to the size of the current drawable, so
+     * if the user draws for example on the bottom right corner,
+     * the path will also be drawn on the bottom right corner of the given bitmap, even
+     * if it is bigger than the current drawable of this view.
+     * this method is useful, if you have a high-resolution image and don't want
+     * to scale it down.
+     * The getDrawable() method would scale the image down to the resolution of the phone screen.
+     */
+    fun drawPathScaledOnBitmap(bitmap: Bitmap): Bitmap {
+
+        val targetWidth = bitmap.width
+        val originalWidth = super.getDrawable().intrinsicWidth
+
+        val targetHeight = bitmap.height
+        val originalHeight = super.getDrawable().intrinsicHeight
+
+        val relativeScaleHorizontal = targetWidth.toFloat() / originalWidth
+        val relativeScaleVertical = targetHeight.toFloat() / originalHeight
+
+        //transform the path relatively to the size of the new bitmap
+        val newPaths = paths.map { (path, paint) ->
+
+            val newPath = Path(path)
+            val scaleMatrix = Matrix().apply {
+                postScale(relativeScaleHorizontal, relativeScaleVertical, relativeScaleHorizontal / 2f, relativeScaleVertical / 2f)
+                if (targetWidth < targetHeight) {
+                    postTranslate(0f, -originalHeight / relativeScaleVertical)
+                } else {
+                    postTranslate(0f, -targetHeight / relativeScaleVertical)
+                }
+
+            }
+            newPath.transform(scaleMatrix)
+            newPath to paint
+
+        }
+
+        val canvas = Canvas(bitmap)
+
+        drawPathsOnCanvas(
+                canvas = canvas,
+                paths = newPaths,
+                strokeWidthScale = (relativeScaleHorizontal + relativeScaleVertical) / 2)
+
+
+        return bitmap
+
+
+    }
+
+    private fun drawPathsOnCanvas(canvas: Canvas, paths: List<Pair<Path, Paint>>, strokeWidthScale: Float = 1f) {
+        val inverse = Matrix().apply { imageMatrix.invert(this) }
+        val transformedPath = Path()
+        val transformedPaint = Paint()
+
+        val scale = FloatArray(9).apply {
+            inverse.getValues(this)
+        }[Matrix.MSCALE_X] * strokeWidthScale
+
+
+        paths.forEach { (path, paint) ->
+            path.transform(inverse, transformedPath)
+            transformedPaint.set(paint)
+            transformedPaint.strokeWidth *= scale
+            canvas.drawPath(transformedPath, transformedPaint)
+        }
+    }
+
 }
